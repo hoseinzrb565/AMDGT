@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import random
 import torch
@@ -118,6 +119,7 @@ def k_fold(data, args):
         Y_test_all.append(Y_test)
 
     for i in range(k):
+        os.makedirs(args.data_dir + 'fold/' + str(i), exist_ok=True)
         X_train1 = pd.DataFrame(data=np.concatenate((X_train_all[i], Y_train_all[i]), axis=1), columns=['drug', 'disease', 'label'])
         X_train1.to_csv(args.data_dir + 'fold/' + str(i) + '/data_train.csv')
         X_test1 = pd.DataFrame(data=np.concatenate((X_test_all[i], Y_test_all[i]), axis=1), columns=['drug', 'disease', 'label'])
