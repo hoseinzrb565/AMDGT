@@ -1,3 +1,5 @@
+import copy
+import os
 import timeit
 import argparse
 import numpy as np
@@ -16,7 +18,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--k_fold', type=int, default=10, help='k-fold cross validation')
-    parser.add_argument('--epochs', type=int, default=1000, help='number of epochs to train')
+    parser.add_argument('--epochs', type=int, default=100, help='number of epochs to train')
     parser.add_argument('--lr', type=float, default=1e-4, help='learning rate')
     parser.add_argument('--weight_decay', type=float, default=1e-3, help='weight_decay')
     parser.add_argument('--random_seed', type=int, default=1234, help='random seed')
@@ -56,6 +58,7 @@ if __name__ == '__main__':
     disease_feature = torch.FloatTensor(data['diseasefeature']).to(device)
     protein_feature = torch.FloatTensor(data['proteinfeature']).to(device)
     all_sample = torch.tensor(data['all_drdi']).long()
+    unsample = torch.tensor(data["unsample"]).long()
 
     start = timeit.default_timer()
 
@@ -67,12 +70,17 @@ if __name__ == '__main__':
     print('Dataset:', args.dataset)
 
     for i in range(args.k_fold):
+        pretrained_dir = os.path.join("pre-trained", args.dataset, "fold", str(i))
+        unsampled_probs_dir = os.path.join("unsampled-probs", args.dataset, "fold", str(i))
+        os.makedirs(pretrained_dir, exist_ok=True)
+        os.makedirs(unsampled_probs_dir, exist_ok=True)
 
         print('fold:', i)
         print(Metric)
 
         model = AMNTDDA(args)
         model = model.to(device)
+        best_model = copy.deepcopy(model)
         optimizer = optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.lr)
 
         best_auc, best_aupr, best_accuracy, best_precision, best_recall, best_f1, best_mcc = 0, 0, 0, 0, 0, 0, 0
@@ -116,10 +124,23 @@ if __name__ == '__main__':
                 best_auc = AUC
                 best_aupr, best_accuracy, best_precision, best_recall, best_f1, best_mcc = AUPR, accuracy, precision, recall, f1, mcc
                 print('AUC improved at epoch ', best_epoch, ';\tbest_auc:', best_auc)
+                best_model.load_state_dict(model.state_dict())
 
         AUCs.append(best_auc)
         AUPRs.append(best_aupr)
 
+        # Save the best model
+        torch.save(best_model.state_dict(), os.path.join(pretrained_dir, "model.pt"))
+
+        # Use the best model to compute unsampled (neither positive nor negative) edges' probabilites
+        with torch.no_grad():
+            best_model.eval()
+
+            _, unsampled_score = best_model(drdr_graph, didi_graph, drdipr_graph, drug_feature, disease_feature, protein_feature, unsample)
+            unsampled_prob = fn.softmax(unsampled_score, dim=-1)[:, 1]
+
+            np.save(os.path.join(unsampled_probs_dir, "unsampled_prob.npy"), unsampled_prob.cpu().numpy())
+        
     print('AUC:', AUCs)
     AUC_mean = np.mean(AUCs)
     AUC_std = np.std(AUCs)
